@@ -1,4 +1,5 @@
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Role, User, UserStatus, utcnow
@@ -59,7 +60,15 @@ async def observe_user(
             pending.username_display = username
             if full_name:
                 pending.full_name = full_name
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                # Defensive backstop: some other row still holds this telegram_user_id
+                # (e.g. a pre-fix removed row on an older database — see
+                # bot/db/engine.py's startup heal). Don't crash the update; just skip
+                # activation this time, the next message from this user will retry.
+                await session.rollback()
+                return None
             await session.refresh(pending)
             return pending
 
@@ -123,6 +132,10 @@ async def remove_employee(session: AsyncSession, user_id: int) -> User:
         raise ValueError("Not an employee")
     user.status = UserStatus.REMOVED
     user.removed_at = utcnow()
+    # Free up the telegram_user_id (unique) slot so this same person can be invited
+    # and reactivated again later — a removed row keeping it would otherwise collide
+    # with the fresh PENDING row created for them on re-invitation.
+    user.telegram_user_id = None
     await session.commit()
     await session.refresh(user)
     return user
