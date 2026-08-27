@@ -1,0 +1,15 @@
+# Hysteria2 client config template.
+# Copy to config.yaml and fill in your real server/auth values (config.yaml is gitignored).
+# Derived from a hysteria2:// share link:
+#   hysteria2://AUTH@SERVER:PORT?insecure=1#name
+#   -> server: SERVER:PORT, auth: AUTH, tls.insecure: true (if insecure=1 was present)
+
+server: your-server-host:443
+
+auth: your-auth-string
+
+tls:
+  insecure: false
+
+socks5:
+  listen: 127.0.0.1:1080

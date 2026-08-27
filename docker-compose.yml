@@ -1,8 +1,18 @@
 services:
+  hysteria:
+    image: tobyxdd/hysteria:latest
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./hysteria/config.yaml:/etc/hysteria/config.yaml:ro
+    command: ["client", "-c", "/etc/hysteria/config.yaml"]
+
   bot:
     build: .
     restart: unless-stopped
     network_mode: host
+    depends_on:
+      - hysteria
     env_file:
       - .env
     volumes:

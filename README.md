@@ -63,6 +63,19 @@ PROXY_URL=socks5://user:pass@your-proxy-host:1080
 
 Затем пересоберите: `docker compose up --build -d`.
 
+#### Использование Hysteria2-прокси
+
+Hysteria2 — не SOCKS/HTTP-прокси-протокол сам по себе, поэтому его нельзя указать напрямую в `PROXY_URL`. Вместо этого (на ветке `ru_version`) `docker-compose.yml` поднимает официальный клиент Hysteria2 как сайдкар (`hysteria` сервис), который открывает локальный SOCKS5-прокси, к которому уже подключается бот:
+
+1. `cp hysteria/config.example.yaml hysteria/config.yaml`
+2. Заполните `hysteria/config.yaml` по вашей `hysteria2://` share-ссылке:
+   - `hysteria2://AUTH@SERVER:PORT?insecure=1#name` →
+     `server: SERVER:PORT`, `auth: AUTH`, `tls.insecure: true` (только если в ссылке был `insecure=1`).
+3. Оставьте в `.env` `PROXY_URL=socks5://127.0.0.1:1080` — оба контейнера используют `network_mode: host`, поэтому бот достаёт до локального SOCKS5-порта клиента Hysteria2 через `localhost`.
+4. `docker compose up --build -d` (при первом запуске подтянет образ `tobyxdd/hysteria`)
+
+`hysteria/config.yaml` в `.gitignore`, так как содержит реальные данные прокси.
+
 Логи:
 
 ```bash
