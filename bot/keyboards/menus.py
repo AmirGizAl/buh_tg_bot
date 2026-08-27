@@ -3,6 +3,9 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 INCOME = "Приход"
 EXPENSE = "Расход"
 RECONCILE = "Сверить"
+REPORT = "Отчёт"
+# Labels for the two report-type buttons shown after pressing "Отчёт" (inline keyboard,
+# not part of the persistent reply menu — see bot/keyboards/inline.py:report_type_picker).
 REPORT_CURRENT = "Текущий"
 REPORT_RECONCILED = "Сверено"
 CREATE_ACCOUNT = "Создать счёт"
@@ -16,8 +19,7 @@ TEAM_MEMBERS = "Члены команды"
 CMD_INCOME = "income"
 CMD_EXPENSE = "expense"
 CMD_RECONCILE = "reconcile"
-CMD_REPORT_CURRENT = "report_current"
-CMD_REPORT_RECONCILED = "report_reconciled"
+CMD_REPORT = "report"
 CMD_CREATE_ACCOUNT = "create_account"
 CMD_DELETE_ACCOUNT = "delete_account"
 CMD_ADD_EMPLOYEE = "add_employee"
@@ -29,8 +31,7 @@ def owner_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=INCOME), KeyboardButton(text=EXPENSE)],
-            [KeyboardButton(text=RECONCILE)],
-            [KeyboardButton(text=REPORT_CURRENT), KeyboardButton(text=REPORT_RECONCILED)],
+            [KeyboardButton(text=RECONCILE), KeyboardButton(text=REPORT)],
             [KeyboardButton(text=CREATE_ACCOUNT), KeyboardButton(text=DELETE_ACCOUNT)],
             [KeyboardButton(text=ADD_EMPLOYEE), KeyboardButton(text=REMOVE_EMPLOYEE)],
             [KeyboardButton(text=TEAM_MEMBERS)],
@@ -44,8 +45,7 @@ def employee_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=INCOME), KeyboardButton(text=EXPENSE)],
-            [KeyboardButton(text=RECONCILE)],
-            [KeyboardButton(text=REPORT_CURRENT), KeyboardButton(text=REPORT_RECONCILED)],
+            [KeyboardButton(text=RECONCILE), KeyboardButton(text=REPORT)],
         ],
         resize_keyboard=True,
         is_persistent=True,

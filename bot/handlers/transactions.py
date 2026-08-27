@@ -144,6 +144,7 @@ async def confirm_transaction(callback: CallbackQuery, state: FSMContext, bot: B
         f"Счёт: {esc(account.label)}\n"
         f"Сумма: {format_amount(tx.amount, force_sign=True)}\n"
         f"Комментарий: {esc(comment) if comment else '—'}\n"
+        f"Баланс счёта: {format_amount(account.balance)}\n"
         f"Пользователь: {esc(actor.username_display or actor.full_name or callback.from_user.id)}",
     )
     await callback.answer()
@@ -187,7 +188,7 @@ async def confirm_rollback(callback: CallbackQuery, bot: Bot, config: Config) ->
             return
 
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer("Транзакция откачена.")
+    await callback.message.answer("Транзакция откатана.")
 
     if snapshot.origin_message_id:
         try:
@@ -203,6 +204,7 @@ async def confirm_rollback(callback: CallbackQuery, bot: Bot, config: Config) ->
         f"<b>Откат транзакции</b>\n"
         f"Счёт: {esc(snapshot.account_label)}\n"
         f"Сумма: {format_amount(snapshot.amount, force_sign=True)}\n"
+        f"Баланс счёта: {format_amount(snapshot.account_balance)}\n"
         f"Автор: {esc(snapshot.actor_label)}",
     )
     await callback.answer()

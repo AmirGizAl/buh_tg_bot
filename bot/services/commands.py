@@ -9,8 +9,7 @@ from bot.keyboards.menus import (
     CMD_INCOME,
     CMD_RECONCILE,
     CMD_REMOVE_EMPLOYEE,
-    CMD_REPORT_CURRENT,
-    CMD_REPORT_RECONCILED,
+    CMD_REPORT,
     CMD_TEAM_MEMBERS,
 )
 
@@ -21,8 +20,7 @@ EMPLOYEE_COMMANDS = [
     BotCommand(command=CMD_INCOME, description="Приход"),
     BotCommand(command=CMD_EXPENSE, description="Расход"),
     BotCommand(command=CMD_RECONCILE, description="Сверить"),
-    BotCommand(command=CMD_REPORT_CURRENT, description="Текущий отчёт"),
-    BotCommand(command=CMD_REPORT_RECONCILED, description="Сверенный отчёт"),
+    BotCommand(command=CMD_REPORT, description="Отчёт"),
 ]
 
 OWNER_COMMANDS = EMPLOYEE_COMMANDS + [

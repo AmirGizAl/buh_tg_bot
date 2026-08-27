@@ -35,6 +35,7 @@ class RolledBackTx:
     created_at: datetime
     origin_message_id: int | None
     author_telegram_id: int | None
+    account_balance: Decimal
 
 
 async def create_transaction(
@@ -80,7 +81,7 @@ async def set_origin_message(session: AsyncSession, tx_id: int, message_id: int)
         await session.commit()
 
 
-def _snapshot(tx: Transaction) -> RolledBackTx:
+def _snapshot(tx: Transaction, balance_after: Decimal) -> RolledBackTx:
     from bot.utils import actor_label
 
     return RolledBackTx(
@@ -92,6 +93,7 @@ def _snapshot(tx: Transaction) -> RolledBackTx:
         created_at=tx.created_at,
         origin_message_id=tx.origin_message_id,
         author_telegram_id=tx.created_by.telegram_user_id,
+        account_balance=balance_after,
     )
 
 
@@ -109,8 +111,9 @@ async def rollback_transaction(session: AsyncSession, tx_id: int, actor_telegram
     if tx.created_by.telegram_user_id != actor_telegram_id:
         raise NotAuthorError()
 
-    snapshot = _snapshot(tx)
-    tx.account.balance = Decimal(str(tx.account.balance)) - Decimal(str(tx.amount))
+    new_balance = Decimal(str(tx.account.balance)) - Decimal(str(tx.amount))
+    tx.account.balance = new_balance
+    snapshot = _snapshot(tx, new_balance)
     await session.delete(tx)
     await session.commit()
     return snapshot
@@ -123,9 +126,11 @@ async def rollback_all_unreconciled_for_account(session: AsyncSession, account_i
         .where(Transaction.account_id == account_id, Transaction.reconciled.is_(False))
     )
     txs = list(result.scalars())
-    snapshots = [_snapshot(tx) for tx in txs]
+    snapshots = []
     for tx in txs:
-        tx.account.balance = Decimal(str(tx.account.balance)) - Decimal(str(tx.amount))
+        new_balance = Decimal(str(tx.account.balance)) - Decimal(str(tx.amount))
+        tx.account.balance = new_balance
+        snapshots.append(_snapshot(tx, new_balance))
         await session.delete(tx)
     if txs:
         await session.commit()

@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.db.models import Account, User
+from bot.keyboards.menus import REPORT_CURRENT, REPORT_RECONCILED
 from bot.utils import actor_label, format_amount
 
 
@@ -50,7 +51,7 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Submit", callback_data="confirm"),
+                InlineKeyboardButton(text="Сохранить", callback_data="confirm"),
                 InlineKeyboardButton(text="Отмена", callback_data="cancel"),
             ]
         ]
@@ -69,6 +70,17 @@ def rollback_confirm_keyboard(tx_id: int) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="Подтвердить", callback_data=f"rollback_confirm:{tx_id}"),
                 InlineKeyboardButton(text="Отмена", callback_data=f"rollback_cancel:{tx_id}"),
+            ]
+        ]
+    )
+
+
+def report_type_picker() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=REPORT_CURRENT, callback_data="report_type:current"),
+                InlineKeyboardButton(text=REPORT_RECONCILED, callback_data="report_type:reconciled"),
             ]
         ]
     )

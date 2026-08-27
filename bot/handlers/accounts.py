@@ -1,4 +1,5 @@
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -115,7 +116,7 @@ async def choose_account_to_delete(callback: CallbackQuery, state: FSMContext) -
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
         f"<b>Удалить счёт</b>\n{esc(account.label)}\nБаланс: {format_amount(account.balance)}\n\n"
-        "Все несверенные транзакции по этому счёту будут автоматически откачены.",
+        "Все несверенные транзакции по этому счёту будут автоматически откатаны.",
         reply_markup=confirm_keyboard(),
     )
     await callback.answer()
@@ -141,8 +142,21 @@ async def confirm_delete_account(
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(f"Счёт удалён: {esc(account.label)}", reply_markup=menu_for_role(role))
 
+    # The "Откатить" button on each auto-rolled-back transaction's own DM message must
+    # stop being clickable — same best-effort strip as a manual "Сверить".
+    for rolled in rolled_back:
+        if rolled.origin_message_id and rolled.author_telegram_id:
+            try:
+                await bot.edit_message_reply_markup(
+                    chat_id=rolled.author_telegram_id,
+                    message_id=rolled.origin_message_id,
+                    reply_markup=None,
+                )
+            except TelegramBadRequest:
+                pass
+
     note = f"<b>Счёт удалён</b>\n{esc(account.label)}"
     if rolled_back:
-        note += f"\nАвтоматически откачено транзакций: {len(rolled_back)}"
+        note += f"\nАвтоматически откатано транзакций: {len(rolled_back)}"
     await post_to_group(bot, config, note)
     await callback.answer()
