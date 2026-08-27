@@ -6,7 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramNetworkError
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from sqlalchemy import select
 
 from bot.config import MSK, load_config
@@ -52,11 +52,27 @@ async def _set_commands(bot: Bot) -> None:
         async with get_session() as session:
             result = await session.execute(select(User).where(User.status == UserStatus.ACTIVE))
             active_users = list(result.scalars())
-        for user in active_users:
-            if user.telegram_user_id is not None:
-                await command_service.set_commands_for(bot, user.telegram_user_id, user.role.value)
     except TelegramNetworkError as exc:
         logger.warning("Could not register bot commands (will retry on next restart): %s", exc)
+        return
+
+    for user in active_users:
+        if user.telegram_user_id is None:
+            continue
+        try:
+            await command_service.set_commands_for(bot, user.telegram_user_id, user.role.value)
+        except TelegramBadRequest:
+            # Telegram doesn't know about this chat yet (e.g. the owner/employee has
+            # never sent the bot a single message) — per-chat commands can't be
+            # pushed until they do. Not fatal: harmless to skip, and AccessMiddleware
+            # pushes the same commands the moment this user's chat becomes known.
+            logger.info(
+                "Could not set commands for user %s yet (no chat with the bot): will retry once they message it",
+                user.telegram_user_id,
+            )
+        except TelegramNetworkError as exc:
+            logger.warning("Could not register bot commands (will retry on next restart): %s", exc)
+            return
 
 
 async def main() -> None:
