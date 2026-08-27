@@ -5,8 +5,13 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from bot.db.engine import get_session
-from bot.keyboards.inline import current_report_export_keyboard, period_picker, report_format_keyboard
-from bot.keyboards.menus import CMD_REPORT_CURRENT, CMD_REPORT_RECONCILED, REPORT_CURRENT, REPORT_RECONCILED
+from bot.keyboards.inline import (
+    current_report_export_keyboard,
+    period_picker,
+    report_format_keyboard,
+    report_type_picker,
+)
+from bot.keyboards.menus import CMD_REPORT, REPORT
 from bot.services import reports as report_service
 
 router = Router()
@@ -17,17 +22,24 @@ class ReconciledReportStates(StatesGroup):
     choosing_period = State()
 
 
-@router.message(F.text == REPORT_CURRENT)
-@router.message(Command(CMD_REPORT_CURRENT))
-async def show_current_report(message: Message, role: str | None, state: FSMContext, bot: Bot) -> None:
+@router.message(F.text == REPORT)
+@router.message(Command(CMD_REPORT))
+async def start_report(message: Message, role: str | None, state: FSMContext, bot: Bot) -> None:
     if role not in ("owner", "employee"):
         return
     await report_service.clear_report_buttons(bot, state)
+    await message.answer("Выберите тип отчёта:", reply_markup=report_type_picker())
+
+
+@router.callback_query(F.data == "report_type:current")
+async def pick_current_report(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.message.edit_reply_markup(reply_markup=None)
     async with get_session() as session:
         pending = await report_service.fetch_transactions(session, reconciled=False)
     preview = report_service.render_current_preview(pending)
-    sent = await message.answer(preview, reply_markup=current_report_export_keyboard())
+    sent = await callback.message.answer(preview, reply_markup=current_report_export_keyboard())
     await report_service.remember_report_buttons(state, sent.chat.id, sent.message_id)
+    await callback.answer()
 
 
 @router.callback_query(F.data.in_({"export:current:xlsx", "export:current:csv"}))
@@ -46,14 +58,12 @@ async def export_current_report(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-@router.message(F.text == REPORT_RECONCILED)
-@router.message(Command(CMD_REPORT_RECONCILED))
-async def start_reconciled_report(message: Message, role: str | None, state: FSMContext, bot: Bot) -> None:
-    if role not in ("owner", "employee"):
-        return
-    await report_service.clear_report_buttons(bot, state)
+@router.callback_query(F.data == "report_type:reconciled")
+async def pick_reconciled_report(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(ReconciledReportStates.choosing_period)
-    await message.answer("Выберите период:", reply_markup=period_picker())
+    await callback.message.answer("Выберите период:", reply_markup=period_picker())
+    await callback.answer()
 
 
 @router.callback_query(ReconciledReportStates.choosing_period, F.data.startswith("period:"))
