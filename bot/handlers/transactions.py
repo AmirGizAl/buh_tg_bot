@@ -106,7 +106,9 @@ async def cancel_draft(callback: CallbackQuery) -> None:
     draft_id = callback.data.split(":", 1)[1]
     draft = draft_service.get_draft(draft_id)
     if draft is None:
-        await callback.answer("Черновик уже обработан.", show_alert=True)
+        await callback.answer(
+            "Черновик недоступен: уже обработан или истёк срок ожидания (48 ч).", show_alert=True
+        )
         return
     if draft.actor_telegram_id != callback.from_user.id:
         await callback.answer("Это не ваш черновик.", show_alert=True)
@@ -122,7 +124,9 @@ async def confirm_draft(callback: CallbackQuery, bot: Bot, config: Config) -> No
     draft_id = callback.data.split(":", 1)[1]
     draft = draft_service.get_draft(draft_id)
     if draft is None:
-        await callback.answer("Черновик уже обработан.", show_alert=True)
+        await callback.answer(
+            "Черновик недоступен: уже обработан или истёк срок ожидания (48 ч).", show_alert=True
+        )
         return
     if draft.actor_telegram_id != callback.from_user.id:
         await callback.answer("Это не ваш черновик.", show_alert=True)
