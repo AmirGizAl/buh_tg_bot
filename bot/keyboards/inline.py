@@ -58,6 +58,17 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def draft_keyboard(draft_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Сохранить", callback_data=f"draft_confirm:{draft_id}"),
+                InlineKeyboardButton(text="Отмена", callback_data=f"draft_cancel:{draft_id}"),
+            ]
+        ]
+    )
+
+
 def rollback_keyboard(tx_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="Откатить", callback_data=f"rollback:{tx_id}")]]

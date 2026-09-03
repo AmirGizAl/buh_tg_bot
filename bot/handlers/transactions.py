@@ -1,5 +1,3 @@
-from decimal import Decimal
-
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
@@ -9,9 +7,10 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.config import Config
 from bot.db.engine import get_session
-from bot.keyboards.inline import account_picker, confirm_keyboard, rollback_confirm_keyboard, rollback_keyboard
+from bot.keyboards.inline import account_picker, draft_keyboard, rollback_confirm_keyboard, rollback_keyboard
 from bot.keyboards.menus import CMD_EXPENSE, CMD_INCOME, EXPENSE, INCOME
 from bot.services import accounts as account_service
+from bot.services import drafts as draft_service
 from bot.services import reports as report_service
 from bot.services import transactions as tx_service
 from bot.services import users as user_service
@@ -28,7 +27,6 @@ DIRECTION_LABEL = {"income": INCOME, "expense": EXPENSE}
 class TransactionStates(StatesGroup):
     choosing_account = State()
     entering_amount = State()
-    confirming = State()
 
 
 async def _start(message: Message, role: str | None, state: FSMContext, bot: Bot, direction: str) -> None:
@@ -75,11 +73,24 @@ async def enter_amount(message: Message, state: FSMContext) -> None:
         await message.answer("Не удалось разобрать сумму. Введите число или выражение, например 25+5*3-15/5.")
         return
 
-    data = await state.update_data(amount=str(amount), comment=comment or "")
+    data = await state.get_data()
     async with get_session() as session:
         account = await account_service.get_account(session, data["account_id"])
 
     direction = data["direction"]
+    # The draft is now self-contained (see bot/services/drafts.py) — release the FSM
+    # state immediately so starting any other action doesn't strand this draft's
+    # buttons: they're addressed by draft id in their own callback_data from here on,
+    # not by the user's current FSM state.
+    await state.clear()
+    draft_id = draft_service.create_draft(
+        account_id=data["account_id"],
+        direction=direction,
+        amount=amount,
+        comment=comment,
+        actor_telegram_id=message.from_user.id,
+    )
+
     signed = amount if direction == "income" else -amount
     summary = (
         f"<b>{DIRECTION_LABEL[direction]}</b>\n"
@@ -87,47 +98,66 @@ async def enter_amount(message: Message, state: FSMContext) -> None:
         f"Сумма: {format_amount(signed, force_sign=True)}\n"
         f"Комментарий: {esc(comment) if comment else '—'}"
     )
-    await state.set_state(TransactionStates.confirming)
-    await message.answer(summary, reply_markup=confirm_keyboard())
+    await message.answer(summary, reply_markup=draft_keyboard(draft_id))
 
 
-@router.callback_query(TransactionStates.confirming, F.data == "cancel")
-async def cancel_transaction(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
+@router.callback_query(F.data.startswith("draft_cancel:"))
+async def cancel_draft(callback: CallbackQuery) -> None:
+    draft_id = callback.data.split(":", 1)[1]
+    draft = draft_service.get_draft(draft_id)
+    if draft is None:
+        await callback.answer("Черновик уже обработан.", show_alert=True)
+        return
+    if draft.actor_telegram_id != callback.from_user.id:
+        await callback.answer("Это не ваш черновик.", show_alert=True)
+        return
+    draft_service.pop_draft(draft_id)
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer("Отменено.")
+    await callback.message.answer("Черновик отменён.")
     await callback.answer()
 
 
-@router.callback_query(TransactionStates.confirming, F.data == "confirm")
-async def confirm_transaction(callback: CallbackQuery, state: FSMContext, bot: Bot, config: Config) -> None:
-    data = await state.get_data()
-    direction = data["direction"]
-    comment = data["comment"] or None
+@router.callback_query(F.data.startswith("draft_confirm:"))
+async def confirm_draft(callback: CallbackQuery, bot: Bot, config: Config) -> None:
+    draft_id = callback.data.split(":", 1)[1]
+    draft = draft_service.get_draft(draft_id)
+    if draft is None:
+        await callback.answer("Черновик уже обработан.", show_alert=True)
+        return
+    if draft.actor_telegram_id != callback.from_user.id:
+        await callback.answer("Это не ваш черновик.", show_alert=True)
+        return
 
     async with get_session() as session:
         actor = await user_service.get_active_user(session, callback.from_user.id)
         try:
             tx, account = await tx_service.create_transaction(
                 session,
-                account_id=data["account_id"],
-                direction=direction,
-                amount=Decimal(data["amount"]),
-                comment=comment,
+                account_id=draft.account_id,
+                direction=draft.direction,
+                amount=draft.amount,
+                comment=draft.comment,
                 actor=actor,
             )
         except InsufficientFundsError:
-            await state.clear()
+            draft_service.pop_draft(draft_id)
             await callback.message.edit_reply_markup(reply_markup=None)
             await callback.message.answer("На счету недостаточно средств.")
             await callback.answer()
             return
+        except LookupError:
+            draft_service.pop_draft(draft_id)
+            await callback.message.edit_reply_markup(reply_markup=None)
+            await callback.message.answer("Счёт был удалён, черновик недействителен.")
+            await callback.answer()
+            return
 
-    await state.clear()
+    draft_service.pop_draft(draft_id)
     await callback.message.edit_reply_markup(reply_markup=None)
 
+    comment = draft.comment
     record = (
-        f"<b>{DIRECTION_LABEL[direction]}</b>\n"
+        f"<b>{DIRECTION_LABEL[draft.direction]}</b>\n"
         f"Счёт: {esc(account.label)}\n"
         f"Сумма: {format_amount(tx.amount, force_sign=True)}\n"
         f"Комментарий: {esc(comment) if comment else '—'}\n"
@@ -140,7 +170,7 @@ async def confirm_transaction(callback: CallbackQuery, state: FSMContext, bot: B
     await post_to_group(
         bot,
         config,
-        f"<b>{DIRECTION_LABEL[direction]}</b>\n"
+        f"<b>{DIRECTION_LABEL[draft.direction]}</b>\n"
         f"Счёт: {esc(account.label)}\n"
         f"Сумма: {format_amount(tx.amount, force_sign=True)}\n"
         f"Комментарий: {esc(comment) if comment else '—'}\n"
