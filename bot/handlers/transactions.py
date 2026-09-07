@@ -24,6 +24,19 @@ router.message.filter(F.chat.type == "private")
 DIRECTION_LABEL = {"income": INCOME, "expense": EXPENSE}
 
 
+async def _strip_markup(callback: CallbackQuery) -> None:
+    """Best-effort removal of a message's inline keyboard. Wrapped because Telegram
+    rejects a redundant edit ("message is not modified") with an exception — and that
+    used to be able to fire *after* a transaction was already committed (see the
+    pop-before-write fix above for why), silently aborting the handler mid-flow with
+    the money-affecting work already done but the user-facing confirmation never
+    sent. Never let a cosmetic follow-up step crash a handler past that point."""
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
+
 class TransactionStates(StatesGroup):
     choosing_account = State()
     entering_amount = State()
@@ -60,7 +73,7 @@ async def choose_account(callback: CallbackQuery, state: FSMContext) -> None:
     account_id = int(callback.data.split(":", 1)[1])
     await state.update_data(account_id=account_id)
     await state.set_state(TransactionStates.entering_amount)
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await _strip_markup(callback)
     await callback.message.answer("Сумма и комментарий (например: 25+5*3-15/5 зарплата):")
     await callback.answer()
 
@@ -119,7 +132,7 @@ async def cancel_draft(callback: CallbackQuery) -> None:
             "Черновик недоступен: уже обработан или истёк срок ожидания (48 ч).", show_alert=True
         )
         return
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await _strip_markup(callback)
     await callback.message.answer("Черновик отменён.")
     await callback.answer()
 
@@ -162,17 +175,17 @@ async def confirm_draft(callback: CallbackQuery, bot: Bot, config: Config) -> No
                 actor=actor,
             )
         except InsufficientFundsError:
-            await callback.message.edit_reply_markup(reply_markup=None)
+            await _strip_markup(callback)
             await callback.message.answer("На счету недостаточно средств.")
             await callback.answer()
             return
         except LookupError:
-            await callback.message.edit_reply_markup(reply_markup=None)
+            await _strip_markup(callback)
             await callback.message.answer("Счёт был удалён, черновик недействителен.")
             await callback.answer()
             return
 
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await _strip_markup(callback)
 
     comment = claimed.comment
     record = (
@@ -216,7 +229,7 @@ async def start_rollback(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("rollback_cancel:"))
 async def cancel_rollback(callback: CallbackQuery) -> None:
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await _strip_markup(callback)
     await callback.answer("Отменено")
 
 
@@ -236,7 +249,7 @@ async def confirm_rollback(callback: CallbackQuery, bot: Bot, config: Config) ->
             await callback.answer("Откатить может только автор транзакции.", show_alert=True)
             return
 
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await _strip_markup(callback)
     await callback.message.answer("Транзакция откатана.")
 
     if snapshot.origin_message_id:
