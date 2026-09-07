@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -53,14 +53,29 @@ async def create_transaction(
         raise LookupError("Account not found")
 
     signed = amount if direction == "income" else -amount
-    new_balance = Decimal(str(account.balance)) + signed
-    if direction == "expense" and new_balance < 0:
-        raise InsufficientFundsError()
+    if direction == "expense":
+        # Advisory check against the last-read balance — the atomic UPDATE below is
+        # what actually protects the persisted value from a lost update if another
+        # transaction on this same account commits in between, but two expenses
+        # racing past this check at the same instant could still both pass it. That
+        # residual double-spend race would need real row locking/serializable
+        # transactions to close completely; not attempted here.
+        if Decimal(str(account.balance)) + signed < 0:
+            raise InsufficientFundsError()
 
-    account.balance = new_balance
     tx = Transaction(account_id=account.id, amount=signed, comment=comment, created_by_id=actor.id)
     session.add(tx)
+    # Atomic "balance = balance + signed" at the database level, instead of reading
+    # account.balance into Python and writing a computed value back — the latter is a
+    # classic lost-update race: if two requests for the same account (e.g. a
+    # duplicate/retried Telegram update, or two different concurrent transactions)
+    # both read the balance before either commits, whichever commits last silently
+    # overwrites the other's contribution to the balance column.
+    await session.execute(
+        update(Account).where(Account.id == account.id).values(balance=Account.balance + signed)
+    )
     await session.commit()
+    await session.refresh(account)
     await session.refresh(tx)
     return tx, account
 
@@ -81,10 +96,10 @@ async def set_origin_message(session: AsyncSession, tx_id: int, message_id: int)
         await session.commit()
 
 
-def _snapshot(tx: Transaction, balance_after: Decimal) -> RolledBackTx:
+def _snapshot_fields(tx: Transaction) -> dict:
     from bot.utils import actor_label
 
-    return RolledBackTx(
+    return dict(
         tx_id=tx.id,
         account_label=tx.account.label,
         amount=Decimal(str(tx.amount)),
@@ -93,7 +108,6 @@ def _snapshot(tx: Transaction, balance_after: Decimal) -> RolledBackTx:
         created_at=tx.created_at,
         origin_message_id=tx.origin_message_id,
         author_telegram_id=tx.created_by.telegram_user_id,
-        account_balance=balance_after,
     )
 
 
@@ -111,12 +125,19 @@ async def rollback_transaction(session: AsyncSession, tx_id: int, actor_telegram
     if tx.created_by.telegram_user_id != actor_telegram_id:
         raise NotAuthorError()
 
-    new_balance = Decimal(str(tx.account.balance)) - Decimal(str(tx.amount))
-    tx.account.balance = new_balance
-    snapshot = _snapshot(tx, new_balance)
+    account = tx.account
+    fields = _snapshot_fields(tx)  # captured before the row is gone
+    tx_amount = Decimal(str(tx.amount))
+
+    # Same atomic-UPDATE rationale as create_transaction — see there for details.
+    await session.execute(
+        update(Account).where(Account.id == account.id).values(balance=Account.balance - tx_amount)
+    )
     await session.delete(tx)
     await session.commit()
-    return snapshot
+    await session.refresh(account)
+
+    return RolledBackTx(**fields, account_balance=Decimal(str(account.balance)))
 
 
 async def rollback_all_unreconciled_for_account(session: AsyncSession, account_id: int) -> list[RolledBackTx]:
@@ -126,15 +147,26 @@ async def rollback_all_unreconciled_for_account(session: AsyncSession, account_i
         .where(Transaction.account_id == account_id, Transaction.reconciled.is_(False))
     )
     txs = list(result.scalars())
-    snapshots = []
+    if not txs:
+        return []
+
+    fields_per_tx = [_snapshot_fields(tx) for tx in txs]
+    total_delta = sum((Decimal(str(tx.amount)) for tx in txs), Decimal("0"))
+
     for tx in txs:
-        new_balance = Decimal(str(tx.account.balance)) - Decimal(str(tx.amount))
-        tx.account.balance = new_balance
-        snapshots.append(_snapshot(tx, new_balance))
         await session.delete(tx)
-    if txs:
-        await session.commit()
-    return snapshots
+    # One atomic adjustment for the whole batch — see create_transaction for why this
+    # must be a database-level "balance = balance - total" rather than a Python
+    # read-modify-write.
+    await session.execute(
+        update(Account).where(Account.id == account_id).values(balance=Account.balance - total_delta)
+    )
+    await session.commit()
+
+    account = await session.get(Account, account_id)
+    await session.refresh(account)
+    final_balance = Decimal(str(account.balance))
+    return [RolledBackTx(**fields, account_balance=final_balance) for fields in fields_per_tx]
 
 
 async def reconcile(session: AsyncSession, *, account_id: int | None) -> list[Transaction]:

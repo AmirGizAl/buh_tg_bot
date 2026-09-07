@@ -113,7 +113,12 @@ async def cancel_draft(callback: CallbackQuery) -> None:
     if draft.actor_telegram_id != callback.from_user.id:
         await callback.answer("Это не ваш черновик.", show_alert=True)
         return
-    draft_service.pop_draft(draft_id)
+    if draft_service.pop_draft(draft_id) is None:
+        # Already claimed by a concurrent/duplicate press — nothing left to do.
+        await callback.answer(
+            "Черновик недоступен: уже обработан или истёк срок ожидания (48 ч).", show_alert=True
+        )
+        return
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer("Черновик отменён.")
     await callback.answer()
@@ -132,36 +137,46 @@ async def confirm_draft(callback: CallbackQuery, bot: Bot, config: Config) -> No
         await callback.answer("Это не ваш черновик.", show_alert=True)
         return
 
+    # Claim the draft *before* touching the database: dict.pop() runs to completion
+    # without yielding to the event loop, so of two "Сохранить" presses arriving for
+    # the same draft (a double-tap, or Telegram redelivering the same callback_query
+    # over a flaky connection — both are real, observed causes), only one of them can
+    # ever get a non-None result here. The other bails out immediately instead of
+    # racing this one into creating a second, duplicate transaction.
+    claimed = draft_service.pop_draft(draft_id)
+    if claimed is None:
+        await callback.answer(
+            "Черновик недоступен: уже обработан или истёк срок ожидания (48 ч).", show_alert=True
+        )
+        return
+
     async with get_session() as session:
         actor = await user_service.get_active_user(session, callback.from_user.id)
         try:
             tx, account = await tx_service.create_transaction(
                 session,
-                account_id=draft.account_id,
-                direction=draft.direction,
-                amount=draft.amount,
-                comment=draft.comment,
+                account_id=claimed.account_id,
+                direction=claimed.direction,
+                amount=claimed.amount,
+                comment=claimed.comment,
                 actor=actor,
             )
         except InsufficientFundsError:
-            draft_service.pop_draft(draft_id)
             await callback.message.edit_reply_markup(reply_markup=None)
             await callback.message.answer("На счету недостаточно средств.")
             await callback.answer()
             return
         except LookupError:
-            draft_service.pop_draft(draft_id)
             await callback.message.edit_reply_markup(reply_markup=None)
             await callback.message.answer("Счёт был удалён, черновик недействителен.")
             await callback.answer()
             return
 
-    draft_service.pop_draft(draft_id)
     await callback.message.edit_reply_markup(reply_markup=None)
 
-    comment = draft.comment
+    comment = claimed.comment
     record = (
-        f"<b>{DIRECTION_LABEL[draft.direction]}</b>\n"
+        f"<b>{DIRECTION_LABEL[claimed.direction]}</b>\n"
         f"Счёт: {esc(account.label)}\n"
         f"Сумма: {format_amount(tx.amount, force_sign=True)}\n"
         f"Комментарий: {esc(comment) if comment else '—'}\n"
@@ -174,7 +189,7 @@ async def confirm_draft(callback: CallbackQuery, bot: Bot, config: Config) -> No
     await post_to_group(
         bot,
         config,
-        f"<b>{DIRECTION_LABEL[draft.direction]}</b>\n"
+        f"<b>{DIRECTION_LABEL[claimed.direction]}</b>\n"
         f"Счёт: {esc(account.label)}\n"
         f"Сумма: {format_amount(tx.amount, force_sign=True)}\n"
         f"Комментарий: {esc(comment) if comment else '—'}\n"
