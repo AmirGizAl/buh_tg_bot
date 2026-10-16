@@ -13,7 +13,7 @@ from bot.config import MSK, load_config
 from bot.db.engine import get_session, init_db, init_engine
 from bot.db.models import User, UserStatus
 from bot.fsm_storage import storage
-from bot.handlers import access, accounts, group_guard, reconcile, reports, start, transactions
+from bot.handlers import access, accounts, errors, group_guard, reconcile, reports, start, transactions
 from bot.middlewares.access import AccessMiddleware
 from bot.services import commands as command_service
 from bot.services import users as user_service
@@ -101,6 +101,7 @@ async def main() -> None:
         dp.message.middleware(access_middleware)
         dp.callback_query.middleware(access_middleware)
 
+        dp.include_router(errors.router)
         dp.include_router(group_guard.router)
         dp.include_router(start.router)
         dp.include_router(accounts.router)

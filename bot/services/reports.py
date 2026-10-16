@@ -67,22 +67,49 @@ def to_full_row(tx: Transaction) -> tuple[str, str, str, str, str, str, str]:
     )
 
 
+# A Telegram message holds at most 4096 characters; the old preview put *every*
+# unreconciled transaction into one message and failed with "message is too long" once
+# there were a hundred or so. The chat preview now shows only the most recent rows —
+# the full list is always one tap away in the Excel/CSV export under the message.
+CURRENT_PREVIEW_MAX_ROWS = 30
+CURRENT_PREVIEW_CHAR_BUDGET = 3500  # well under 4096: leaves room for the footnote
+_PREVIEW_COMMENT_LIMIT = 80
+
+
+def _shorten(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def render_current_preview(transactions: list[Transaction]) -> str:
     if not transactions:
         return "Нет несверенных транзакций."
-    lines = ["   ".join(CURRENT_PREVIEW_HEADERS)]
-    for tx in transactions:
-        lines.append(
-            "   ".join(
-                [
-                    format_amount(tx.amount, force_sign=True),
-                    esc(tx.account.label),
-                    esc(tx.comment or ""),
-                    esc(actor_label(tx.created_by)),
-                ]
-            )
+
+    header = "   ".join(CURRENT_PREVIEW_HEADERS)
+    used = len(header)
+    shown: list[str] = []
+    # newest first, so that when the budget runs out it's the oldest rows that are cut
+    for tx in reversed(transactions[-CURRENT_PREVIEW_MAX_ROWS:]):
+        line = "   ".join(
+            [
+                format_amount(tx.amount, force_sign=True),
+                esc(tx.account.label),
+                esc(_shorten(tx.comment or "", _PREVIEW_COMMENT_LIMIT)),
+                esc(actor_label(tx.created_by)),
+            ]
         )
-    return "<blockquote>" + "\n".join(lines) + "</blockquote>"
+        if shown and used + len(line) + 1 > CURRENT_PREVIEW_CHAR_BUDGET:
+            break
+        shown.append(line)
+        used += len(line) + 1
+    shown.reverse()
+
+    text = "<blockquote>" + "\n".join([header, *shown]) + "</blockquote>"
+    if len(shown) < len(transactions):
+        text += (
+            f"\nПоказаны последние {len(shown)} из {len(transactions)}. "
+            "Полный список — в Excel/CSV ниже."
+        )
+    return text
 
 
 def build_xlsx(rows: list[tuple], headers: list[str]) -> io.BytesIO:

@@ -1,7 +1,6 @@
 from decimal import Decimal
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -15,6 +14,7 @@ from bot.services import accounts as account_service
 from bot.services import reports as report_service
 from bot.services import transactions as tx_service
 from bot.services.notify import post_to_group
+from bot.services.ui import strip_buttons_in_background, strip_markup
 from bot.utils import esc, format_amount
 
 router = Router()
@@ -63,7 +63,7 @@ async def choose_reconcile_target(callback: CallbackQuery, state: FSMContext) ->
 
     await state.update_data(account_id=account_id)
     await state.set_state(ReconcileStates.confirming)
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer(
         f"<b>Сверка</b>\n{esc(label)}\nНесверенных транзакций: {len(pending)}"
         + (f"\n{esc(totals_text)}" if totals_text else ""),
@@ -75,7 +75,7 @@ async def choose_reconcile_target(callback: CallbackQuery, state: FSMContext) ->
 @router.callback_query(ReconcileStates.confirming, F.data == "cancel")
 async def cancel_reconcile(callback: CallbackQuery, state: FSMContext, role: str) -> None:
     await state.clear()
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer("Отменено.", reply_markup=menu_for_role(role))
     await callback.answer()
 
@@ -90,19 +90,21 @@ async def confirm_reconcile(
         txs = await tx_service.reconcile(session, account_id=account_id)
 
     await state.clear()
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer(f"Сверено транзакций: {len(txs)}", reply_markup=menu_for_role(role))
 
-    for tx in txs:
-        if tx.origin_message_id and tx.created_by.telegram_user_id:
-            try:
-                await bot.edit_message_reply_markup(
-                    chat_id=tx.created_by.telegram_user_id,
-                    message_id=tx.origin_message_id,
-                    reply_markup=None,
-                )
-            except TelegramBadRequest:
-                pass
+    # Removing the "Откатить" buttons is cosmetic (rollback is rejected server-side for
+    # reconciled transactions anyway) and takes one API call per transaction — with
+    # many of them it runs into Telegram flood control. Do it in the background, and
+    # only after everything the user and the group are waiting for has been sent.
+    strip_buttons_in_background(
+        bot,
+        [
+            (tx.created_by.telegram_user_id, tx.origin_message_id)
+            for tx in txs
+            if tx.origin_message_id and tx.created_by.telegram_user_id
+        ],
+    )
 
     await post_to_group(bot, config, f"<b>Сверка выполнена</b>\nТранзакций: {len(txs)}")
     await callback.answer()

@@ -1,5 +1,4 @@
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -19,6 +18,7 @@ from bot.keyboards.menus import (
 from bot.services import accounts as account_service
 from bot.services import reports as report_service
 from bot.services.notify import post_to_group
+from bot.services.ui import strip_buttons_in_background, strip_markup
 from bot.utils import esc, format_amount
 
 router = Router()
@@ -51,7 +51,7 @@ async def choose_currency(callback: CallbackQuery, state: FSMContext) -> None:
     currency = callback.data.split(":", 1)[1]
     await state.update_data(currency=currency)
     await state.set_state(CreateAccountStates.entering_name)
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer("Название счёта:")
     await callback.answer()
 
@@ -71,7 +71,7 @@ async def enter_account_name(message: Message, state: FSMContext) -> None:
 @router.callback_query(CreateAccountStates.confirming, F.data == "cancel")
 async def cancel_create_account(callback: CallbackQuery, state: FSMContext, role: str) -> None:
     await state.clear()
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer("Отменено.", reply_markup=menu_for_role(role))
     await callback.answer()
 
@@ -85,7 +85,7 @@ async def confirm_create_account(
         account = await account_service.create_account(session, Currency(data["currency"]), data["name"])
 
     await state.clear()
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer(f"Счёт создан: {esc(account.label)}", reply_markup=menu_for_role(role))
     await post_to_group(bot, config, f"<b>Новый счёт</b>\n{esc(account.label)}")
     await callback.answer()
@@ -113,7 +113,7 @@ async def choose_account_to_delete(callback: CallbackQuery, state: FSMContext) -
         account = await account_service.get_account(session, account_id)
     await state.update_data(account_id=account_id)
     await state.set_state(DeleteAccountStates.confirming)
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer(
         f"<b>Удалить счёт</b>\n{esc(account.label)}\nБаланс: {format_amount(account.balance)}\n\n"
         "Все несверенные транзакции по этому счёту будут автоматически откатаны.",
@@ -125,7 +125,7 @@ async def choose_account_to_delete(callback: CallbackQuery, state: FSMContext) -
 @router.callback_query(DeleteAccountStates.confirming, F.data == "cancel")
 async def cancel_delete_account(callback: CallbackQuery, state: FSMContext, role: str) -> None:
     await state.clear()
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer("Отменено.", reply_markup=menu_for_role(role))
     await callback.answer()
 
@@ -139,21 +139,20 @@ async def confirm_delete_account(
         account, rolled_back = await account_service.delete_account(session, data["account_id"])
 
     await state.clear()
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer(f"Счёт удалён: {esc(account.label)}", reply_markup=menu_for_role(role))
 
     # The "Откатить" button on each auto-rolled-back transaction's own DM message must
-    # stop being clickable — same best-effort strip as a manual "Сверить".
-    for rolled in rolled_back:
-        if rolled.origin_message_id and rolled.author_telegram_id:
-            try:
-                await bot.edit_message_reply_markup(
-                    chat_id=rolled.author_telegram_id,
-                    message_id=rolled.origin_message_id,
-                    reply_markup=None,
-                )
-            except TelegramBadRequest:
-                pass
+    # stop being clickable — same paced background strip as after "Сверить" (see there
+    # for why this must not run inline).
+    strip_buttons_in_background(
+        bot,
+        [
+            (rolled.author_telegram_id, rolled.origin_message_id)
+            for rolled in rolled_back
+            if rolled.origin_message_id and rolled.author_telegram_id
+        ],
+    )
 
     note = f"<b>Счёт удалён</b>\n{esc(account.label)}"
     if rolled_back:
