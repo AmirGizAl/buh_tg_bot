@@ -13,6 +13,7 @@ from bot.keyboards.inline import (
 )
 from bot.keyboards.menus import CMD_REPORT, REPORT
 from bot.services import reports as report_service
+from bot.services.ui import strip_markup
 
 router = Router()
 router.message.filter(F.chat.type == "private")
@@ -33,7 +34,7 @@ async def start_report(message: Message, role: str | None, state: FSMContext, bo
 
 @router.callback_query(F.data == "report_type:current")
 async def pick_current_report(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     async with get_session() as session:
         pending = await report_service.fetch_transactions(session, reconciled=False)
     preview = report_service.render_current_preview(pending)
@@ -60,7 +61,7 @@ async def export_current_report(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "report_type:reconciled")
 async def pick_reconciled_report(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await state.set_state(ReconciledReportStates.choosing_period)
     await callback.message.answer("Выберите период:", reply_markup=period_picker())
     await callback.answer()
@@ -70,7 +71,7 @@ async def pick_reconciled_report(callback: CallbackQuery, state: FSMContext) -> 
 async def choose_reconciled_period(callback: CallbackQuery, state: FSMContext) -> None:
     period = callback.data.split(":", 1)[1]
     await state.update_data(period=period)
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer("Выберите формат:", reply_markup=report_format_keyboard())
     await callback.answer()
 
@@ -93,6 +94,6 @@ async def send_reconciled_report(callback: CallbackQuery, state: FSMContext) -> 
         filename = f"report_reconciled_{period}.csv"
 
     await state.clear()
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer_document(BufferedInputFile(buffer.read(), filename=filename))
     await callback.answer()

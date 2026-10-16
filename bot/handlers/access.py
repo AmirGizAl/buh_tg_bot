@@ -21,6 +21,7 @@ from bot.services import commands as command_service
 from bot.services import reports as report_service
 from bot.services import users as user_service
 from bot.services.notify import post_to_group
+from bot.services.ui import strip_markup
 from bot.utils import actor_label, esc
 
 router = Router()
@@ -63,7 +64,7 @@ async def enter_employee_username(message: Message, state: FSMContext) -> None:
 @router.callback_query(AddEmployeeStates.confirming, F.data == "cancel")
 async def cancel_add_employee(callback: CallbackQuery, state: FSMContext, role: str) -> None:
     await state.clear()
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer("Отменено.", reply_markup=menu_for_role(role))
     await callback.answer()
 
@@ -78,7 +79,7 @@ async def confirm_add_employee(
             user = await user_service.invite_employee(session, data["username"])
         except user_service.AlreadyInvitedError:
             await state.clear()
-            await callback.message.edit_reply_markup(reply_markup=None)
+            await strip_markup(callback)
             await callback.message.answer(
                 "Этот пользователь уже приглашён или уже сотрудник.", reply_markup=menu_for_role(role)
             )
@@ -86,7 +87,7 @@ async def confirm_add_employee(
             return
 
     await state.clear()
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer(
         f"Сотрудник @{esc(user.username_display)} приглашён. Доступ откроется, как только он "
         "напишет боту или что-нибудь в общем чате.",
@@ -121,7 +122,7 @@ async def choose_employee_to_remove(callback: CallbackQuery, state: FSMContext) 
         return
     await state.update_data(user_id=user_id)
     await state.set_state(RemoveEmployeeStates.confirming)
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer(
         f"Удалить сотрудника {esc(actor_label(employee))}?", reply_markup=confirm_keyboard()
     )
@@ -131,7 +132,7 @@ async def choose_employee_to_remove(callback: CallbackQuery, state: FSMContext) 
 @router.callback_query(RemoveEmployeeStates.confirming, F.data == "cancel")
 async def cancel_remove_employee(callback: CallbackQuery, state: FSMContext, role: str) -> None:
     await state.clear()
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer("Отменено.", reply_markup=menu_for_role(role))
     await callback.answer()
 
@@ -145,7 +146,7 @@ async def confirm_remove_employee(
         employee = await user_service.remove_employee(session, data["user_id"])
 
     await state.clear()
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await strip_markup(callback)
     await callback.message.answer(
         f"Сотрудник удалён: {esc(actor_label(employee))}", reply_markup=menu_for_role(role)
     )
