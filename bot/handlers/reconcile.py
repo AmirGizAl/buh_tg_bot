@@ -13,7 +13,7 @@ from bot.keyboards.menus import CMD_RECONCILE, RECONCILE, menu_for_role
 from bot.services import accounts as account_service
 from bot.services import reports as report_service
 from bot.services import transactions as tx_service
-from bot.services.notify import post_to_group
+from bot.services.delivery import answer_callback_safely, answer_reliably, notify_group
 from bot.services.ui import strip_buttons_in_background, strip_markup
 from bot.utils import esc, format_amount
 
@@ -91,7 +91,7 @@ async def confirm_reconcile(
 
     await state.clear()
     await strip_markup(callback)
-    await callback.message.answer(f"Сверено транзакций: {len(txs)}", reply_markup=menu_for_role(role))
+    await answer_reliably(callback.message, f"Сверено транзакций: {len(txs)}", reply_markup=menu_for_role(role))
 
     # Removing the "Откатить" buttons is cosmetic (rollback is rejected server-side for
     # reconciled transactions anyway) and takes one API call per transaction — with
@@ -106,5 +106,7 @@ async def confirm_reconcile(
         ],
     )
 
-    await post_to_group(bot, config, f"<b>Сверка выполнена</b>\nТранзакций: {len(txs)}")
-    await callback.answer()
+    await notify_group(
+        bot, config, f"<b>Сверка выполнена</b>\nТранзакций: {len(txs)}", reply_to=callback.message
+    )
+    await answer_callback_safely(callback)
