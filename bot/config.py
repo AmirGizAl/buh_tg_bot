@@ -8,6 +8,12 @@ load_dotenv()
 
 MSK = ZoneInfo("Europe/Moscow")
 
+# Seconds to wait for a Telegram API response before giving up (aiogram's default is 60).
+# A minute of silence after pressing "Сохранить" pushed a user to enter the same record
+# again; 20 s plus the retries in bot/services/delivery.py recovers from a one-off stall
+# quickly. Long polling is unaffected: aiogram adds its polling timeout on top of this.
+TELEGRAM_REQUEST_TIMEOUT = 20
+
 
 @dataclass(frozen=True)
 class Config:

@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from sqlalchemy import select
 
-from bot.config import MSK, load_config
+from bot.config import MSK, TELEGRAM_REQUEST_TIMEOUT, load_config
 from bot.db.engine import get_session, init_db, init_engine
 from bot.db.models import User, UserStatus
 from bot.fsm_storage import storage
@@ -87,7 +87,7 @@ async def main() -> None:
     async with get_session() as session:
         await user_service.get_or_seed_owner(session, config.owner_id)
 
-    session_ = AiohttpSession(proxy=config.proxy_url) if config.proxy_url else None
+    session_ = AiohttpSession(proxy=config.proxy_url, timeout=TELEGRAM_REQUEST_TIMEOUT)
 
     async with Bot(
         token=config.bot_token,

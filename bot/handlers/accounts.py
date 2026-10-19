@@ -17,7 +17,7 @@ from bot.keyboards.menus import (
 )
 from bot.services import accounts as account_service
 from bot.services import reports as report_service
-from bot.services.notify import post_to_group
+from bot.services.delivery import answer_callback_safely, answer_reliably, notify_group
 from bot.services.ui import strip_buttons_in_background, strip_markup
 from bot.utils import esc, format_amount
 
@@ -86,9 +86,9 @@ async def confirm_create_account(
 
     await state.clear()
     await strip_markup(callback)
-    await callback.message.answer(f"Счёт создан: {esc(account.label)}", reply_markup=menu_for_role(role))
-    await post_to_group(bot, config, f"<b>Новый счёт</b>\n{esc(account.label)}")
-    await callback.answer()
+    await answer_reliably(callback.message, f"Счёт создан: {esc(account.label)}", reply_markup=menu_for_role(role))
+    await notify_group(bot, config, f"<b>Новый счёт</b>\n{esc(account.label)}", reply_to=callback.message)
+    await answer_callback_safely(callback)
 
 
 @router.message(F.text == DELETE_ACCOUNT)
@@ -140,7 +140,7 @@ async def confirm_delete_account(
 
     await state.clear()
     await strip_markup(callback)
-    await callback.message.answer(f"Счёт удалён: {esc(account.label)}", reply_markup=menu_for_role(role))
+    await answer_reliably(callback.message, f"Счёт удалён: {esc(account.label)}", reply_markup=menu_for_role(role))
 
     # The "Откатить" button on each auto-rolled-back transaction's own DM message must
     # stop being clickable — same paced background strip as after "Сверить" (see there
@@ -157,5 +157,5 @@ async def confirm_delete_account(
     note = f"<b>Счёт удалён</b>\n{esc(account.label)}"
     if rolled_back:
         note += f"\nАвтоматически откатано транзакций: {len(rolled_back)}"
-    await post_to_group(bot, config, note)
-    await callback.answer()
+    await notify_group(bot, config, note, reply_to=callback.message)
+    await answer_callback_safely(callback)

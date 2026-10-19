@@ -20,7 +20,7 @@ from bot.keyboards.menus import (
 from bot.services import commands as command_service
 from bot.services import reports as report_service
 from bot.services import users as user_service
-from bot.services.notify import post_to_group
+from bot.services.delivery import answer_callback_safely, answer_reliably, notify_group
 from bot.services.ui import strip_markup
 from bot.utils import actor_label, esc
 
@@ -88,13 +88,19 @@ async def confirm_add_employee(
 
     await state.clear()
     await strip_markup(callback)
-    await callback.message.answer(
+    await answer_reliably(
+        callback.message,
         f"Сотрудник @{esc(user.username_display)} приглашён. Доступ откроется, как только он "
         "напишет боту или что-нибудь в общем чате.",
         reply_markup=menu_for_role(role),
     )
-    await post_to_group(bot, config, f"<b>Приглашён новый сотрудник</b>\n@{esc(user.username_display)}")
-    await callback.answer()
+    await notify_group(
+        bot,
+        config,
+        f"<b>Приглашён новый сотрудник</b>\n@{esc(user.username_display)}",
+        reply_to=callback.message,
+    )
+    await answer_callback_safely(callback)
 
 
 @router.message(F.text == REMOVE_EMPLOYEE)
@@ -147,8 +153,8 @@ async def confirm_remove_employee(
 
     await state.clear()
     await strip_markup(callback)
-    await callback.message.answer(
-        f"Сотрудник удалён: {esc(actor_label(employee))}", reply_markup=menu_for_role(role)
+    await answer_reliably(
+        callback.message, f"Сотрудник удалён: {esc(actor_label(employee))}", reply_markup=menu_for_role(role)
     )
 
     if employee.telegram_user_id:
@@ -157,8 +163,10 @@ async def confirm_remove_employee(
         except TelegramBadRequest:
             pass
 
-    await post_to_group(bot, config, f"<b>Сотрудник удалён</b>\n{esc(actor_label(employee))}")
-    await callback.answer()
+    await notify_group(
+        bot, config, f"<b>Сотрудник удалён</b>\n{esc(actor_label(employee))}", reply_to=callback.message
+    )
+    await answer_callback_safely(callback)
 
 
 @router.message(F.text == TEAM_MEMBERS)

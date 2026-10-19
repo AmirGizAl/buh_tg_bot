@@ -1,3 +1,5 @@
+import logging
+
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -13,10 +15,17 @@ from bot.services import drafts as draft_service
 from bot.services import reports as report_service
 from bot.services import transactions as tx_service
 from bot.services import users as user_service
-from bot.services.notify import post_to_group
+from bot.services.delivery import (
+    SAVED_NOT_CONFIRMED,
+    answer_callback_safely,
+    answer_reliably,
+    notify_group,
+)
 from bot.services.transactions import AlreadyReconciledError, InsufficientFundsError, NotAuthorError
 from bot.services.ui import strip_buttons_in_background, strip_markup
 from bot.utils import esc, format_amount, parse_amount_and_comment
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 router.message.filter(F.chat.type == "private")
@@ -182,11 +191,21 @@ async def confirm_draft(callback: CallbackQuery, bot: Bot, config: Config) -> No
         f"Комментарий: {esc(comment) if comment else '—'}\n"
         f"Баланс счёта: {format_amount(account.balance)}"
     )
-    record_message = await callback.message.answer(record, reply_markup=rollback_keyboard(tx.id))
-    async with get_session() as session:
-        await tx_service.set_origin_message(session, tx.id, record_message.message_id)
+    # From here on the transaction is already saved. Each remaining step is independent
+    # (a failure of one must not skip the others) and none may escape as an exception —
+    # a generic "error" here would tell the user nothing was saved and invite exactly
+    # the duplicate entry this code exists to prevent. See bot/services/delivery.py.
+    card = await answer_reliably(callback.message, record, reply_markup=rollback_keyboard(tx.id))
+    if card is not None:
+        try:
+            async with get_session() as session:
+                await tx_service.set_origin_message(session, tx.id, card.message_id)
+        except Exception:
+            logger.exception("Could not store origin message of transaction %s", tx.id)
+    else:
+        await answer_reliably(callback.message, SAVED_NOT_CONFIRMED)
 
-    await post_to_group(
+    await notify_group(
         bot,
         config,
         f"<b>{DIRECTION_LABEL[claimed.direction]}</b>\n"
@@ -195,8 +214,12 @@ async def confirm_draft(callback: CallbackQuery, bot: Bot, config: Config) -> No
         f"Комментарий: {esc(comment) if comment else '—'}\n"
         f"Баланс счёта: {format_amount(account.balance)}\n"
         f"Пользователь: {esc(actor.username_display or actor.full_name or callback.from_user.id)}",
+        reply_to=callback.message,
     )
-    await callback.answer()
+    # Last-resort channel if the card could not be delivered: a pop-up on the button.
+    await answer_callback_safely(
+        callback, SAVED_NOT_CONFIRMED if card is None else None, show_alert=card is None
+    )
 
 
 @router.callback_query(F.data.startswith("rollback:"))
@@ -236,13 +259,14 @@ async def confirm_rollback(callback: CallbackQuery, bot: Bot, config: Config) ->
             await callback.answer("Откатить может только автор транзакции.", show_alert=True)
             return
 
+    # The rollback is already committed — same independent/never-raise rules as above.
     await strip_markup(callback)
-    await callback.message.answer("Транзакция откатана.")
+    await answer_reliably(callback.message, "Транзакция откатана.")
 
     if snapshot.origin_message_id:
         strip_buttons_in_background(bot, [(callback.from_user.id, snapshot.origin_message_id)])
 
-    await post_to_group(
+    await notify_group(
         bot,
         config,
         f"<b>Откат транзакции</b>\n"
@@ -250,5 +274,6 @@ async def confirm_rollback(callback: CallbackQuery, bot: Bot, config: Config) ->
         f"Сумма: {format_amount(snapshot.amount, force_sign=True)}\n"
         f"Баланс счёта: {format_amount(snapshot.account_balance)}\n"
         f"Автор: {esc(snapshot.actor_label)}",
+        reply_to=callback.message,
     )
-    await callback.answer()
+    await answer_callback_safely(callback)
