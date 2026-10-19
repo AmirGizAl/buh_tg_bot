@@ -1,5 +1,5 @@
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -149,6 +149,10 @@ async def confirm_remove_employee(
 ) -> None:
     data = await state.get_data()
     async with get_session() as session:
+        target = await user_service.get_employee(session, data["user_id"])
+        # remove_employee() clears telegram_user_id (so the same person can be invited
+        # again later), so the id needed to reset their "/" commands has to be read first.
+        former_telegram_id = target.telegram_user_id if target else None
         employee = await user_service.remove_employee(session, data["user_id"])
 
     await state.clear()
@@ -157,11 +161,11 @@ async def confirm_remove_employee(
         callback.message, f"Сотрудник удалён: {esc(actor_label(employee))}", reply_markup=menu_for_role(role)
     )
 
-    if employee.telegram_user_id:
+    if former_telegram_id:
         try:
-            await command_service.reset_commands_for(bot, employee.telegram_user_id)
-        except TelegramBadRequest:
-            pass
+            await command_service.reset_commands_for(bot, former_telegram_id)
+        except TelegramAPIError:
+            pass  # cosmetic and already committed — must not skip the group notification
 
     await notify_group(
         bot, config, f"<b>Сотрудник удалён</b>\n{esc(actor_label(employee))}", reply_to=callback.message
