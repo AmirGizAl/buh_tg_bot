@@ -13,7 +13,7 @@ from bot.config import MSK, TELEGRAM_REQUEST_TIMEOUT, load_config
 from bot.db.engine import get_session, init_db, init_engine
 from bot.db.models import User, UserStatus
 from bot.fsm_storage import storage
-from bot.handlers import access, accounts, errors, group_guard, reconcile, reports, start, transactions
+from bot.handlers import access, accounts, errors, group_guard, reconcile, records, reports, start, transactions
 from bot.middlewares.access import AccessMiddleware
 from bot.services import commands as command_service
 from bot.services import users as user_service
@@ -109,6 +109,7 @@ async def main() -> None:
         dp.include_router(reconcile.router)
         dp.include_router(reports.router)
         dp.include_router(access.router)
+        dp.include_router(records.router)
 
         await _delete_webhook_with_retry(bot)
         await _set_commands(bot)
