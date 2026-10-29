@@ -5,6 +5,7 @@ from bot.keyboards.menus import (
     CMD_ADD_EMPLOYEE,
     CMD_CREATE_ACCOUNT,
     CMD_DELETE_ACCOUNT,
+    CMD_DELETE_RECORDS,
     CMD_EXPENSE,
     CMD_INCOME,
     CMD_RECONCILE,
@@ -29,6 +30,7 @@ OWNER_COMMANDS = EMPLOYEE_COMMANDS + [
     BotCommand(command=CMD_ADD_EMPLOYEE, description="Допустить сотрудника"),
     BotCommand(command=CMD_REMOVE_EMPLOYEE, description="Удалить сотрудника"),
     BotCommand(command=CMD_TEAM_MEMBERS, description="Члены команды"),
+    BotCommand(command=CMD_DELETE_RECORDS, description="Удалить записи"),
 ]
 
 

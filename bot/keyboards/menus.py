@@ -13,6 +13,7 @@ DELETE_ACCOUNT = "Удалить счёт"
 ADD_EMPLOYEE = "Допустить сотрудника"
 REMOVE_EMPLOYEE = "Удалить сотрудника"
 TEAM_MEMBERS = "Члены команды"
+DELETE_RECORDS = "Удалить записи"
 
 # Slash-command equivalents, registered in Telegram's "/" commands menu (bot/main.py) as a
 # fallback entry point that doesn't depend on the reply keyboard being visible.
@@ -25,6 +26,7 @@ CMD_DELETE_ACCOUNT = "delete_account"
 CMD_ADD_EMPLOYEE = "add_employee"
 CMD_REMOVE_EMPLOYEE = "remove_employee"
 CMD_TEAM_MEMBERS = "team_members"
+CMD_DELETE_RECORDS = "delete_records"
 
 
 def owner_menu() -> ReplyKeyboardMarkup:
@@ -35,6 +37,7 @@ def owner_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=CREATE_ACCOUNT), KeyboardButton(text=DELETE_ACCOUNT)],
             [KeyboardButton(text=ADD_EMPLOYEE), KeyboardButton(text=REMOVE_EMPLOYEE)],
             [KeyboardButton(text=TEAM_MEMBERS)],
+            [KeyboardButton(text=DELETE_RECORDS)],
         ],
         resize_keyboard=True,
         is_persistent=True,

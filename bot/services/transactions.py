@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select, update
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -184,3 +184,79 @@ async def reconcile(session: AsyncSession, *, account_id: int | None) -> list[Tr
     if txs:
         await session.commit()
     return txs
+
+
+# ---------------------------------------------------------------------------------------
+# "Удалить записи": wipe the whole transaction history (owner only), accounts and their
+# balances stay untouched.
+# ---------------------------------------------------------------------------------------
+
+
+class RecordsChangedError(Exception):
+    """The set of records to delete no longer matches what the owner was shown."""
+
+    def __init__(self, found: int) -> None:
+        super().__init__(f"{found} records found")
+        self.found = found
+
+
+@dataclass(frozen=True)
+class RecordsSummary:
+    total: int
+    unreconciled: int
+    max_id: int  # the deletion is bounded by this id: records created later are not touched
+    per_account: list[tuple[str, int]]  # (account label, number of records)
+
+
+@dataclass(frozen=True)
+class DeletedRecords:
+    count: int
+    # (author's telegram id, message id) of the confirmation cards whose "Откатить" button
+    # is now dead — to be stripped by the caller
+    card_targets: list[tuple[int, int]]
+
+
+async def summarize_all_transactions(session: AsyncSession) -> RecordsSummary:
+    total, max_id, unreconciled = (
+        await session.execute(
+            select(
+                func.count(Transaction.id),
+                func.coalesce(func.max(Transaction.id), 0),
+                func.coalesce(func.sum(case((Transaction.reconciled.is_(False), 1), else_=0)), 0),
+            )
+        )
+    ).one()
+    rows = await session.execute(
+        select(Account, func.count(Transaction.id))
+        .join(Transaction, Transaction.account_id == Account.id)
+        .group_by(Account.id)
+        .order_by(Account.created_at)
+    )
+    return RecordsSummary(
+        total=total,
+        unreconciled=unreconciled,
+        max_id=max_id,
+        per_account=[(account.label, count) for account, count in rows.all()],
+    )
+
+
+async def delete_all_transactions(session: AsyncSession, *, max_id: int, expected_total: int) -> DeletedRecords:
+    """Delete exactly the records the owner confirmed: every transaction with id <= max_id.
+
+    Account balances are deliberately NOT touched. If the number of deleted rows differs
+    from what was shown (some of them were rolled back in the meantime), nothing is
+    deleted — the whole thing is rolled back and RecordsChangedError is raised. Records
+    created after the summary was shown have a larger id and survive."""
+    card_rows = await session.execute(
+        select(Transaction.origin_message_id, User.telegram_user_id)
+        .join(User, User.id == Transaction.created_by_id)
+        .where(Transaction.id <= max_id, Transaction.origin_message_id.is_not(None))
+    )
+    card_targets = [(chat_id, msg_id) for msg_id, chat_id in card_rows.all() if chat_id]
+
+    result = await session.execute(delete(Transaction).where(Transaction.id <= max_id))
+    if result.rowcount != expected_total:
+        await session.rollback()
+        raise RecordsChangedError(result.rowcount)
+    await session.commit()
+    return DeletedRecords(count=result.rowcount, card_targets=card_targets)
